@@ -255,7 +255,7 @@ return [{ json: { failed: 1, telegram_text: text, slack_text: ':x: ' + text } }]
 **SQL**
 
 ```sql
-SELECT path, content_hash, status FROM kb.documents;
+SELECT path, content_hash, status, chunk_count, embedded_at FROM kb.documents;
 ```
 
 **Connects to:** → Plan changes
@@ -438,7 +438,14 @@ const toDelete = known.filter(r => r.status !== 'deleted' && !onDisk.has(r.path)
 const testMode = cfg.testMode === true || cfg.testMode === 'true';
 // Stay inside Gemini's free daily cap: take files until the piece budget is used,
 // defer the rest to the next run (deferred, not failed).
-const budget = Number(cfg.pieceBudget) || 800;
+// Gemini's daily cap resets at midnight Pacific time: subtract what this Pacific day already used.
+const pacificDay = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+const today = pacificDay(Date.now());
+const usedToday = known
+  .filter(r => r.embedded_at && pacificDay(r.embedded_at) === today)
+  .reduce((n, r) => n + (Number(r.chunk_count) || 0), 0);
+const budget = Math.max(0, (Number(cfg.pieceBudget) || 800) - usedToday);
+if (usedToday) notes.push(`${usedToday} pieces already embedded this Gemini day; ${budget} left`);
 const candidates = testMode ? toEmbedAll.slice(0, Number(cfg.testFileLimit) || 5) : toEmbedAll;
 const toEmbedFiles = [];
 let used = 0, deferred = 0;
@@ -803,7 +810,7 @@ RETURNING path, last_error;
 
 | Setting | Value |
 |---|---|
-| amount | `={{ Math.max(5, Math.ceil($('Loop Over Items').first().json.chunks.length * 0.7)) }}` |
+| amount | `={{ Math.max(5, Math.ceil(((($('Loop Over Items').first() \|\| {}).json \|\| {}).chunks \|\| []).length * 0.7)) \|\| 5 }}` |
 
 **Connects to:** → Loop Over Items
 
